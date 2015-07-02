@@ -68,14 +68,15 @@ trait T0[n <: NatPos] extends NatPos {
   final type fun3[m2 <: NatPos] = ({type f[x <: NatPos] = T0[T0[x]]})#f[m2 # mul[n]]
   final type fun4[m2 <: NatPos] = ({type f[x <: NatPos] = x # add [n] # chain[NatPos, T0]})#f[m2 # mul[n] # chain[NatPos, T0]]
 
-/*
-  // Exp
 
-  type exp[m <: NatPos] = m # Match[NatPos, This, fun7, fun8]
+  /*
+    // Exp
 
-  final type fun7[m2 <: NatPos] = This # mul[This] # exp[m2]
-  final type fun8[m2 <: NatPos] = This # mul[This] # exp[m2] # mul[This]
-*/
+    type exp[m <: NatPos] = m # Match[NatPos, This, fun7, fun8]
+
+    final type fun7[m2 <: NatPos] = This # mul[This] # exp[m2]
+    final type fun8[m2 <: NatPos] = This # mul[This] # exp[m2] # mul[This]
+  */
   // Compare
 
   final type compare[m <: NatPos] = m # Match[Comp, GT , fun5 , fun6 ]

@@ -1,0 +1,703 @@
+
+<!doctype html>
+<html lang="fr">
+
+	<head>
+		<meta charset="utf-8">
+
+		<title>Type-Level Programming en Scala : Trucs et Astuces</title>
+
+		<meta name="description" content="Trucs et Astuces pour prgammer au type-level en Scala.">
+		<meta name="author" content="Christophe Calvès">
+
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/league.css" id="theme">
+
+		<!-- Code syntax highlighting -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+
+		<!--[if lt IE 9]>
+		<script src="lib/js/html5shiv.js"></script>
+		<![endif]-->
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<!-- Any section element inside of this container is displayed as a slide -->
+			<div class="slides">
+				<section>
+					<h1>Type-level programming in Scala</h1>
+					<h3>Trus et Astuces</h3>
+					<p>
+						<small><a href="https://www.linkedin.com/pub/christophe-calv%C3%A8s/b0/325/ab6">Christophe Calvès</a> / <a href="http://twitter.com/chrilves">@chrilves</a></small>
+					</p>
+					<small><a href="https://github.com/christophe-calves/typefun">https://github.com/christophe-calves/typefun</a></small>
+				</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+                INTRO
+
+--------------------------------------------------------------------------------------------------------->
+
+
+                <section>
+				<section data-markdown><script type="text/template">
+## Exemple Canonique
+
+* Au pays des valeurs
+
+```scala
+trait Nat
+case object Z          extends Nat
+case class  S(n : Nat) extends Nat
+```
+
+* Au pays des types
+
+```scala
+trait Nat
+trait Z                extends Nat
+trait S[n <: Nat]      extends Nat
+```
+					</script></section>
+
+					<section data-markdown><script type="text/template">
+### Correct ...
+
+* Signature
+
+```scala
+trait Nat {
+  type succ <: Nat
+  type add[m <: Nat] <: Nat
+  type mul[m <: Nat] <: Nat
+}
+```
+
+* Implémentation
+
+```scala
+trait Z extends Nat {
+  final type succ = S[Z]
+  final type add[m <: Nat] = m
+  final type mul[m <: Nat] = Z
+}
+
+trait S[n <: Nat] extends Nat {
+  final type succ = S[S[n]]
+  final type add[m <: Nat] = S[n#add[m]]
+  final type mul[m <: Nat] = n#mul[m]#add[m]
+}
+
+```
+					</script></section>
+
+					<section data-markdown><script type="text/template">
+### ... mais ...
+
+* Uniquement pour de "petits" nombres:
+
+```scala
+scala> Val[_200]
+res2: Long = 200
+
+scala> Val[_300]
+java.lang.StackOverflowError
+        at scala.reflect.internal.util.WeakHashSet.linkedListLoop$4(WeakHashSet.scala:189)
+        at scala.reflect.internal.util.WeakHashSet.findEntryOrUpdate(WeakHashSet.scala:194)
+```
+
+* Lent!
+					</script></section>
+				</section>
+
+
+<!-------------------------------------------------------------------------------------------------------
+
+                                LIMITATIONS
+
+--------------------------------------------------------------------------------------------------------->
+
+
+                <section>
+					<section data-markdown><script type="text/template">
+### Quelques limitations du typeur
+
+Dès qu'il le peut, il réduit!
+
+```scala
+trait Π {
+  type λ[x]
+}
+
+trait R[f <: Π] extends Π {
+  type λ[x] = f#λ[x]
+}
+
+trait Ω extends R[Ω]
+```
+
+```scala
+scala> type f[x] = Ω#λ[x]
+java.lang.StackOverflowError
+        at scala.reflect.internal.Mirrors$Roots$RootClass.typeOfThis(Mirrors.scala:306)
+        at scala.reflect.internal.Types$ThisType.underlying(Types.scala:1172)
+        at scala.reflect.internal.Types$SimpleTypeProxy$class.boundSyms(Types.scala:153)
+        at scala.reflect.internal.Types$SingletonType.boundSyms(Types.scala:1076)
+```
+</script></section>
+
+<section data-markdown><script type="text/template">
+### Propagation non optimale des containtes de types.
+
+* Un légère tandance à [oublier des containtes de type](https://issues.scala-lang.org/browse/SI-4043?jql=status%20%3D%20Open%20AND%20text%20~%20%22bound%22)
+* La subtitution n'est pas toujours correcte
+
+```scala
+type id[x <: Nat] = x
+type f[n <: Nat] = n#chain[Nat, id]
+type g[n <: Nat] = n#chain[Nat, id]#succ
+```
+
+```scala
+scala> Val[f[Z]]
+res1: typefun.valuelevel.Val.zero.value = 0
+
+scala> Val[f[Z]#succ]
+res2: Long = 1
+
+scala> Val[g[Z]]
+<console>:19: error: could not find implicit value for parameter v: typefun.valuelevel.Val[g[typefun.Z]]
+```
+</script></section>
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+                LOOP
+
+--------------------------------------------------------------------------------------------------------->
+
+
+<section data-markdown><script type="text/template">
+### Astuce N°1
+
+* Éviter à tout prix l'η-expansion
+* normalisation à la définition et l'utilisation **directe**
+* mais non propagée aux membres de type
+
+```scala
+trait LoopSig {
+  type loop
+}
+
+trait LoopRec[l <: LoopSig] extends LoopSig {
+  final type loop = l#loop
+}
+
+trait  Loop extends LoopRec[Loop]
+```
+
+```scala
+scala> List.empty[Loop#loop]
+java.lang.StackOverflowError
+        at scala.reflect.internal.tpe.TypeMaps$class.isPossiblePrefix(TypeMaps.scala:446)
+        at scala.reflect.internal.SymbolTable.isPossiblePrefix(SymbolTable.scala:16)
+```
+</script></section>
+
+
+<!-------------------------------------------------------------------------------------------------------
+
+	            FunLib
+
+------------------------------------------------------------------------------------------------------->
+<section>
+<section data-markdown><script type="text/template">
+### Quelques outils
+
+* Functions
+
+```scala
+trait Π[A,B] {
+  type λ[α <: A] <: B
+}
+```
+
+* Thunks
+
+```scala
+trait Thunk[A] {
+  type eval <: A
+}
+```
+
+* Application paresseuse
+
+```scala
+trait App[A, B, f <: Π[A,B], a <: A] extends Thunk[B] {
+  final type eval = f # λ[a]
+}
+```
+
+</script></section>
+
+
+<section data-markdown><script type="text/template">
+### Astuce N°2 : Rafinement de types
+
+```scala
+trait AppJ[A, B, f <: Π[A,Thunk[B]] , a <: A] extends Thunk[B] {
+  final type eval = f # λ[a] # eval
+}
+```
+
+```scala
+<console>:17: error: overriding type eval in trait Thunk with bounds <: B;
+ type eval has incompatible type
+         final type eval = f # λ[a] # eval
+                    ^
+Nothing <: AppJ.this.eval?
+true
+AppJ.this.eval <: B?
+false
+```
+Abusez des rafinements de types
+
+```scala
+trait AppJ[A, B, f <: Π[A,Thunk[B]] { type λ[α <: A] <: Thunk[B] } , a <: A] extends Thunk[B] {
+  final type eval = f # λ[a] # eval
+}
+```
+
+</script></section>
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+            NatPos : Def + Succ
+
+-------------------------------------------------------------------------------------------------------->
+
+<section>
+<section data-markdown><script type="text/template">
+### Entiers Positifs
+
+* ``ℕ+ = 1 | 2 * ℕ+ | 2 * ℕ+ + 1`
+* Signature
+
+```scala
+tait NatPos {
+  type Match[ R, one <: R, t0[_ <: NatPos] <: R, t1[_ <: NatPos] <: R]  <: R
+}
+```
+
+* Définition
+
+```scala
+trait I extends NatPos {
+  final type Match[R, one <: R, t0_[_ <: NatPos] <: R, t1_[_ <: NatPos] <: R] = one
+}
+
+trait T0[n <: NatPos] extends NatPos {
+  final type Match[R, one <: R, t0_[_ <: NatPos] <: R, t1_[_ <: NatPos] <: R] = t0_[n]
+}
+
+trait T1[n <: NatPos] extends NatPos {
+  final type Match[R, one <: R, t0_[_ <: NatPos] <: R, t1_[_ <: NatPos] <: R] = t1_[n]
+}
+```
+</script></section>
+
+
+
+<section data-markdown><script type="text/template">
+### Successeur
+
+* Signature
+
+```scala
+tait NatPos {
+  type succ <: NatPos
+}
+```
+
+* Définition
+
+```scala
+trait I extends NatPos {
+	final type succ = T0[I] // (1) + 1 = 2 * 1
+}
+
+trait T0[n <: NatPos] extends NatPos {
+	final type succ = T1[n] // (2 * n) + 1 = 2 * 1 + 1
+}
+
+trait T1[n <: NatPos] extends NatPos {
+	final type succ = T0[n#succ] // (2 * n + 1) + 1 = 2 * (n + 1)
+}
+```
+</script></section>
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+            NatPos : Add1
+
+-------------------------------------------------------------------------------------------------------->
+
+
+<section>
+<section data-markdown><script type="text/template">
+## Astuce N°3
+
+* Distinguer les **valeurs** des **calculs**
+* *But*: forcer une stratégie d'appel par valeur
+* *Règle*: ne jamais déguiser un calcul en valeur
+</script></section>
+
+<section data-markdown><script type="text/template">
+### Addition
+
+* Signature
+
+```scala
+tait NatPos {
+  type add[m <: NatPos] <: NatPos
+}
+```
+
+* Définition
+
+```scala
+trait I extends NatPos {
+	final type add[m <: NatPos] = m # succ
+}
+
+trait T0[n <: NatPos] extends NatPos {
+  final type add[m <: NatPos] = m # Match[NatPos, T1[n] , fun1 , fun2 ]
+
+  final type fun1[m2 <: NatPos] = TO[m2 # add[n]] // (2 * n) + (2 * m2     ) = 2 * (m2 + n)
+  final type fun2[m2 <: NatPos] = T1[m2 # add[n]] // (2 * n) + (2 * m2 + 1 ) = 2 * (m2 + n) + 1
+}
+```
+
+</script></section>
+
+
+<section data-markdown><script type="text/template">
+### Problème
+
+* Calcul déguisé en valeur
+
+```scala
+final type fun1[m2 <: NatPos] = TO[m2 # add[n]]
+```
+
+* Duplication des calculs
+
+```scala
+type double[x <: Nat] = x # add [x]
+
+double[TO[m2 # add[n]]] = TO[m2 # add[n]] # add [ TO[m2 # add[n]] ] // duplication des calculs.
+```
+</script></section>
+</section>
+
+
+<!-------------------------------------------------------------------------------------------------------
+
+            Chain
+
+-------------------------------------------------------------------------------------------------------->
+
+
+<section>
+
+<section data-markdown><script type="text/template">
+### Astuce N°4 : Chaînge
+
+* *Idée*: Ne passer en argument que
+ - des valeurs
+ - des variables
+* *Objectif*:
+ - Chaîner le flot des calculs pour
+ - Former un flot de transformation de valeurs (et non de calculs).
+* *Technique*: Bloquer la réduction avec des types abstraits.
+</script></section>
+
+<section data-markdown><script type="text/template">
+### Principe
+
+```scala
+tait NatPos {
+	type chain[R, F[_ <: NatPos] <: R] <: R
+}
+```
+
+* Définition
+
+```scala
+trait I extends NatPos {
+	final type chain[R, F[_ <: NatPos] <: R] = F[I]
+}
+
+trait T0[n <: NatPos] extends NatPos {
+	final type chain[R, F[_ <: NatPos] <: R] = F[T0[n]]
+}
+
+trait T1[n <: NatPos] extends NatPos {
+	final type chain[R, F[_ <: NatPos] <: R] = F[T1[n]]
+}
+```
+</script></section>
+
+
+<section data-markdown><script type="text/template">
+### En Pratique
+
+```scala
+trait T0[n <: NatPos] extends NatPos {
+  final type add[m <: NatPos] = m # Match[NatPos, T1[n] , fun1 , fun2 ]
+
+  final type fun1[m2 <: NatPos] = m2 # add[n] # chain[NatPos, T0] // TO[m2 + n]
+  final type fun2[m2 <: NatPos] = m2 # add[n] # chain[NatPos, T1] // T1[m2 + n]
+
+}
+
+trait T1[n <: NatPos] extends NatPos {
+  final type add[m <: NatPos] = m # Match[ NatPos, exp1 , fun1, fun2 ]
+
+  final type exp1 = T0[n # succ]
+  final type fun1[m2 <: NatPos] = m2 # add[n] # chain[NatPos, T1]        // T1[m2 + n]
+  final type fun2[m2 <: NatPos] = m2 # add[n] # succ # chain[NatPos, T0] // TO[(m2 + n) # succ]
+}
+```
+</script></section>
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+            Multiplication
+
+-------------------------------------------------------------------------------------------------------->
+
+<section>
+
+<section data-markdown><script type="text/template">
+### Multiplication
+
+* Signature
+
+```scala
+tait NatPos {
+  type mul[m <: NatPos] <: NatPos
+}
+```
+
+* Définition
+
+```scala
+trait I extends NatPos {
+	final type mul[m <: NatPos] = m // m * 1 = m
+}
+
+trait T0[n <: NatPos] extends NatPos {
+  final type mul[m <: NatPos] = m # Match[NatPos , This , fun3 , fun4 ]
+
+  final type fun3[m2 <: NatPos] =
+	  m2 # mul[n] # chain[NatPos, TO] # chain[NatPos, TO]           // 2n*2n = 4(n * m)
+
+  final type fun4[m2 <: NatPos] =
+	  m2 # mul[n] # chain[NatPos, T0] # add [n] # chain[NatPos, T0] // 2n*(2m+1) = 2(2*m*n + n)
+}
+```
+</script></section>
+
+<section data-markdown><script type="text/template">
+### Alzheimer
+
+Malheureusement:
+```scala
+scala> Val[_2#mul[_2]]
+<console>:32: error: could not find implicit value for parameter ...
+```
+
+*Problème*: dans une longue chaine comme
+
+```scala
+m2 # mul[n] # chain[NatPos, T0] # add [n] # chain[NatPos, T0]
+```
+
+Le typeur déduit:
+```scala
+m2 # mul[n] # chain[NatPos, T0] <: NatPos
+```
+</script></section>
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+            Répetiteur
+
+-------------------------------------------------------------------------------------------------------->
+
+<section>
+<section data-markdown><script type="text/template">
+### Astuce N°5 : β-exapansion
+
+Utiliser autant que possible la transformation de β-exapansion:
+
+```scala
+exp1 # exp2 => ({ type f[x <: T] = x # exp2})#f[exp1]
+```
+
+
+</script></section>
+
+<section data-markdown><script type="text/template">
+### Mise en pratique
+
+```scala
+trait T0[n <: NatPos] extends NatPos {
+  final type mul[m <: NatPos] = m # Match[NatPos , This , fun3 , fun4 ]
+
+  final type fun3[m2 <: NatPos] =
+	   ({type f[x <: NatPos] = T0[T0[x]]})
+		   #f[m2 # mul[n]]
+
+  final type fun4[m2 <: NatPos] =
+	  ({type f[x <: NatPos] = x # add [n] # chain[NatPos, T0]})
+		  #f[m2 # mul[n] # chain[NatPos, T0]]
+}
+```
+</script></section>
+
+
+<section data-markdown><script type="text/template">
+### Resultats
+
+```scala
+type _1 = I
+type _2 = T0[I]
+type _3 = T1[I]
+type _4 = T0[T0[I]]
+type _5 = T1[T0[I]]
+type _6 = T0[T1[I]]
+...
+```
+
+```scala
+Val[ _99 # mul[ _98] # mul[ _57] # add[ _12 # mul[_42] # mul[_88] # mul[_39] ] ]
+res1: Long = 2282742
+
+scala> (99  * 98 * 57) + (12 * 42 * 88 * 39)
+res6: Int = 2282742
+```
+</script></section>
+
+</section>
+
+<!-------------------------------------------------------------------------------------------------------
+
+            Conclusion
+
+-------------------------------------------------------------------------------------------------------->
+
+<section>
+<section data-markdown><script type="text/template">
+### Conclusion
+
+Programmer au Type-Level en Scala c'est
+* Possible!
+* Efficace
+* Le meilleur *Die & Retry* *Puzzle Game* que j'ai pu tester depuis bien longtemps
+
+*Le code*: https://github.com/christophe-calves/typefun
+
+</script></section>
+</section>
+
+
+<!--						<p class="fragment grow">grow</p>
+						<p class="fragment shrink">shrink</p>
+						<p class="fragment fade-out">fade-out</p>
+						<p class="fragment current-visible">current-visible</p>
+						<p class="fragment highlight-red">highlight-red</p>
+						<p class="fragment highlight-blue">highlight-blue</p>
+
+						<code data-trim contenteditable>
+	function linkify( selector ) {
+	  if( supports3DTransforms ) {
+
+	    var nodes = document.querySelectorAll( selector );
+
+	    for( var i = 0, len = nodes.length; i &lt; len; i++ ) {
+	      var node = nodes[i];
+
+	      if( !node.className ) {
+	        node.className += ' roll';
+	      }
+	    }
+	  }
+	}
+						</code>
+
+						-->
+
+
+
+			</div>
+
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+
+			// Full list of configuration options available at:
+			// https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+
+				width: 1280,
+        height: 700,
+
+				transition: 'convex', // none/fade/slide/convex/concave/zoom
+
+				// Optional reveal.js plugins
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true },
+					{ src: 'plugin/notes/notes.js', async: true }
+				]
+			});
+
+		</script>
+
+	</body>
+</html>

@@ -4,22 +4,27 @@ trait Nat {
   type succ <: Nat
   type add[m <: Nat] <: Nat
   type mul[m <: Nat] <: Nat
+
+  type chain[R, f[_ <: Nat] <: R] <: R
 }
 
 trait Z extends Nat {
   final type succ = S[Z]
   final type add[m <: Nat] = m
   final type mul[m <: Nat] = Z
+
+  final type chain[R, f[_ <: Nat] <: R] = f[Z]
 }
 
 trait S[n <: Nat] extends Nat {
   final type succ = S[S[n]]
   final type add[m <: Nat] = S[n#add[m]]
   final type mul[m <: Nat] = n#mul[m]#add[m]
+
+  type chain[R, f[_ <: Nat] <: R] = f[S[n]]
 }
 
 object Nat {
-
   type _0 = Z
   type _1 = S[Z]
   type _2 = S[_1]

@@ -1,0 +1,13 @@
+SLIDES=slides/fr
+OUTDIR=target
+ROOT="$(pwd)"
+
+SLIDES_DIR=${OUTDIR}/${SLIDES}
+
+rm -frv "${SLIDES_DIR}"
+mkdir -p "${SLIDES_DIR}"
+cd "${SLIDES_DIR}"
+git clone "https://github.com/hakimel/reveal.js.git" .
+git checkout 3.1.0
+mv index.html index.html.backup
+cp -fv "$ROOT/${SLIDES}/index.html" .
